@@ -5,6 +5,7 @@ import com.practise.batch.springbatch.repository.StudentRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.batch.core.Job;
 import org.springframework.batch.core.Step;
+import org.springframework.batch.core.configuration.annotation.StepScope;
 import org.springframework.batch.core.job.builder.JobBuilder;
 import org.springframework.batch.core.repository.JobRepository;
 import org.springframework.batch.core.step.builder.StepBuilder;
@@ -22,9 +23,13 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.io.FileSystemResource;
+import org.springframework.core.io.InputStreamResource;
 import org.springframework.core.io.Resource;
+import org.springframework.core.task.SimpleAsyncTaskExecutor;
+import org.springframework.core.task.TaskExecutor;
 import org.springframework.transaction.PlatformTransactionManager;
 
+import java.io.File;
 import java.util.Objects;
 
 
@@ -37,9 +42,13 @@ public class BatchConfig {
     private final JobRepository jobRepository;
 
     @Bean
-    public FlatFileItemReader<Student> itemReader(){
+    @StepScope
+    public FlatFileItemReader<Student> itemReader(//@Value("#{jobExecutionContext['fileResource']}") InputStreamResource resource
+                                                  @Value("#{jobParameters[fullPathFileName]}") String pathToFile){
+
         FlatFileItemReader<Student> itemReader = new FlatFileItemReader<Student>();
-        itemReader.setResource(new FileSystemResource("src/main/resources/MOCK_DATA.csv"));
+        itemReader.setResource(new FileSystemResource(new File(pathToFile)));
+        //itemReader.setResource(resource);
         itemReader.setName("csvReader");
         itemReader.setLinesToSkip(1);
         itemReader.setLineMapper(lineMapper());
@@ -72,25 +81,33 @@ public class BatchConfig {
     }
 
     @Bean
+    public TaskExecutor taskExecutor(){
+        SimpleAsyncTaskExecutor asyncTaskExecutor = new SimpleAsyncTaskExecutor();
+        asyncTaskExecutor.setConcurrencyLimit(20);
+        return asyncTaskExecutor;
+    }
+
+    @Bean
     public StudentProcessor processor(){
         return new StudentProcessor();
     }
 
     @Bean
-    public Step importStep(){
+    public Step importStep(FlatFileItemReader<Student> itemReader){
         return new StepBuilder("csvImport",jobRepository)
-                .<Student,Student>chunk(10,platformTransactionManager)
-                .reader(itemReader())
+                .<Student,Student>chunk(1000,platformTransactionManager)
+                .reader(itemReader)
                 .processor(processor())
                 .writer(writer())
+                .taskExecutor(taskExecutor())
                 .build();
 
     }
 
     @Bean
-    public Job runJob(){
+    public Job runJob(FlatFileItemReader<Student> itemReader){
         return new JobBuilder("importStudents",jobRepository)
-                .start(importStep())
+                .start(importStep(itemReader))
                 .build();
     }
 
